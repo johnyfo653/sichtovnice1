@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Šichtovnice AI Pro 2.5.1</title>
+<style>
+:root{color-scheme:light dark;--bg-light:rgba(255,255,255,.85);--bg-dark:rgba(30,30,45,.85);--accent:#4f8cff;--radius:16px;}
+body{font-family:system-ui,sans-serif;background:linear-gradient(135deg,#a0c4ff,#bdb2ff);
+margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;}
+.container{background:var(--bg-light);backdrop-filter:blur(12px);border-radius:var(--radius);
+box-shadow:0 4px 20px rgba(0,0,0,.2);width:92%;max-width:940px;margin-top:2rem;padding:1.5rem;}
+.dark-mode{background:linear-gradient(135deg,#1e1e2e,#3a3a5e);color:#fff;}
+.dark-mode .container{background:var(--bg-dark);}
+h1{text-align:center;color:var(--accent);}
+input,select,button{margin:.3rem;padding:.55rem .65rem;border-radius:8px;border:none;font-size:1rem;}
+button{background:var(--accent);color:#fff;cursor:pointer;}
+table{width:100%;border-collapse:collapse;margin-top:1rem;}
+th,td{padding:.45rem;text-align:center;border-bottom:1px solid rgba(0,0,0,.1);}
+canvas{width:100%;height:240px;margin-top:1rem;}
+.footer{text-align:center;margin:1rem;font-size:.9rem;opacity:.7;}
+.hidden{display:none;}
+.toggle{cursor:pointer;font-size:1.4rem;text-align:right;}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+.badge{display:inline-block;padding:.2rem .5rem;border-radius:999px;background:rgba(79,140,255,.12)}
+#monthExport{margin:0.5rem 0;}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🕒 Šichtovnice <span class="badge">AI Pro 2.5.1</span></h1>
+
+<div class="row">
+<label>Datum:<input type="date" id="date"></label>
+<label>Příchod:<input type="time" id="start"></label>
+<label>Odchod:<input type="time" id="end"></label>
+<label>Typ:
+<select id="type">
+<option>Ranní</option><option>Odpolední</option><option>Noční</option>
+<option>Dovolená</option><option>Nemoc</option><option>Volno</option>
+</select></label>
+<button id="saveBtn">💾 Uložit</button>
+</div>
+
+<table id="table"><thead>
+<tr><th>Datum</th><th>Příchod</th><th>Odchod</th><th>Typ</th><th>Hodin</th><th>Akce</th></tr>
+</thead><tbody></tbody></table>
+
+<div class="toggle" onclick="toggleSettings()">⚙️ Zobrazit / skrýt nastavení</div>
+<div id="settings" class="hidden">
+<h3>⚙️ Nastavení</h3>
+<div class="row">
+<label>Mzdová sazba (Kč/h):<input type="number" id="rate" step="0.1"></label>
+<label>Příplatek noční (%):<input type="number" id="nightBonus" step="0.1"></label>
+<label>Příplatek odpolední (%):<input type="number" id="aftBonus" step="0.1"></label>
+<label>Odpolední od:<input type="time" id="aftStart"></label>
+<label>do:<input type="time" id="aftEnd"></label>
+<label>Odvody odbory (%):<input type="number" id="union" step="0.1"></label>
+<label>Údržba oděvu (Kč/měs.):<input type="number" id="clothes" step="0.1"></label>
+<label>Délka dne pro dovolenou (h):<input type="number" id="dayLen" step="0.1"></label>
+<label><input type="checkbox" id="break30"> Přestávka 30 min (−0,5 h)</label>
+</div>
+<div class="row">
+<label>Roční nárok dovolené (dny):<input type="number" id="vacDays"></label>
+<label>Roční nárok dovolené (h):<input type="number" id="vacHours"></label>
+</div>
+<div class="row">
+<label>OpenAI klíč:<input type="password" id="openaiKey" placeholder="sk-..."></label>
+<label>Klíč ROMAN2025:<input type="password" id="romanKey" placeholder="ROMAN2025"></label>
+</div>
+<div class="row">
+<button id="saveSettings">💾 Uložit nastavení</button>
+<button id="printBtn">🧾 Tisk / PDF</button>
+<button id="aiBtn">🤖 AI režim</button>
+<button id="clearBtn">🧹 Vymazat data</button>
+</div>
+</div>
+
+<h3>📊 Souhrn</h3>
+<div class="row">
+<label>Vyber měsíc:<input type="month" id="monthExport"></label>
+<button id="exportMonth">📤 Export měsíc → PDF</button>
+</div>
+<p id="summary"></p>
+<canvas id="chart"></canvas>
+</div>
+<div class="footer">© 2025 Roman F. Apps – Šichtovnice AI Pro 2.5.1</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script>
+let shifts=JSON.parse(localStorage.getItem("shiftsPro251")||"[]");
+let settings=JSON.parse(localStorage.getItem("settingsPro251")||"{}");
+const def={rate:150,nightBonus:20,aftBonus:10,aftStart:"12:00",aftEnd:"15:00",
+union:1.5,clothes:200,dayLen:7.5,break30:false,vacDays:25,vacHours:187.5};
+settings=Object.assign({},def,settings);
+const $=s=>document.querySelector(s),tbody=$("#table tbody"),summaryEl=$("#summary"),chartEl=$("#chart");
+
+function toggleSettings(){$("#settings").classList.toggle("hidden");}
+function saveShifts(){localStorage.setItem("shiftsPro251",JSON.stringify(shifts));}
+function saveSettingsToStorage(){
+settings={rate:+rate.value,nightBonus:+nightBonus.value,aftBonus:+aftBonus.value,
+aftStart:aftStart.value,aftEnd:aftEnd.value,union:+union.value,clothes:+clothes.value,
+dayLen:+dayLen.value,break30:break30.checked,vacDays:+vacDays.value,vacHours:+vacHours.value,
+openaiKey:openaiKey.value,romanKey:romanKey.value};
+localStorage.setItem("settingsPro251",JSON.stringify(settings));alert("✅ Nastavení uloženo!");render();}
+function timeDiff(s,e){if(!s||!e)return 0;const a=new Date(`1970-01-01T${s}:00`);let b=new Date(`1970-01-01T${e}:00`);if(b<a)b.setDate(b.getDate()+1);return(b-a)/36e5;}
+function overlap(a1,a2,b1,b2){return(a1<b2&&a2>b1);}
+function addShift(){
+const d=date.value,t=type.value,s=start.value,e=end.value;if(!d){alert("Zadej datum!");return;}
+let h=(t=="Dovolená"||t=="Nemoc")?settings.dayLen:(t=="Volno"?0:timeDiff(s,e));
+if(t.match(/Ranní|Odpolední|Noční/)&&settings.break30)h=Math.max(0,h-0.5);
+shifts.push({date:d,start:s||"",end:e||"",type:t,hours:+h});saveShifts();render();}
+function delShift(i){shifts.splice(i,1);saveShifts();render();}
+function renderTable(){tbody.innerHTML="";shifts.forEach((s,i)=>tbody.innerHTML+=`<tr><td>${s.date}</td><td>${s.start||"-"}</td><td>${s.end||"-"}</td><td>${s.type}</td><td>${s.hours.toFixed(2)}</td><td><button onclick="delShift(${i})">🗑️</button></td></tr>`);}
+function compute(){
+const r=settings.rate,nB=settings.nightBonus/100,aB=settings.aftBonus/100,u=settings.union/100,c=settings.clothes,dL=settings.dayLen;
+let w=0,v=0,m=0,nPay=0,aPay=0;
+shifts.forEach(s=>{
+if(s.type=="Noční")nPay+=s.hours*r*nB;
+if(s.type=="Dovolená")v+=s.hours;
+if(s.type=="Nemoc")m+=s.hours;
+if(!["Dovolená","Nemoc","Volno"].includes(s.type)){
+w+=s.hours;
+if(overlap(s.start,s.end,settings.aftStart,settings.aftEnd))aPay+=s.hours*r*aB;
+}});
+const g=w*r+nPay+aPay;
+return{w,v,m,gross:g,net:g-g*u+c,unionCZK:g*u,night:nPay,aft:aPay,dL};
+}
+let chart;
+function renderChart(){
+const prod={},vac={},sick={};
+shifts.forEach(s=>{
+const m=s.date?.slice(0,7)||"Neznámé";
+prod[m]=prod[m]||0;vac[m]=vac[m]||0;sick[m]=sick[m]||0;
+if(s.type=="Dovolená")vac[m]+=s.hours;
+else if(s.type=="Nemoc")sick[m]+=s.hours;
+else if(s.type!="Volno")prod[m]+=s.hours;
+});
+const labs=Object.keys(prod);
+if(chart)chart.destroy();
+chart=new Chart(chartEl,{type:"bar",data:{labels:labs,datasets:[
+{label:"Odpracované h",data:labs.map(m=>prod[m])},
+{label:"Dovolená h",data:labs.map(m=>vac[m]),backgroundColor:"rgba(255,206,86,.6)"},
+{label:"Nemoc h",data:labs.map(m=>sick[m]),backgroundColor:"rgba(255,99,132,.6)"}]},
+options:{scales:{y:{beginAtZero:true}}}});
+}
+function renderSummary(){
+const s=compute();
+const usedDays=(s.v/settings.dayLen).toFixed(2);
+const remainDays=(settings.vacDays-usedDays).toFixed(2);
+const remainHours=(settings.vacHours-s.v).toFixed(1);
+summaryEl.innerHTML=`Hrubá ${s.gross.toFixed(2)} Kč | Čistá ${s.net.toFixed(2)} Kč | Odvody ${s.unionCZK.toFixed(2)} Kč<br>
+Noční ${s.night.toFixed(2)} Kč | Odpolední ${s.aft.toFixed(2)} Kč<br>
+Odpracováno ${s.w.toFixed(1)} h | Dovolená ${s.v.toFixed(1)} h (${usedDays} dny) | Nemoc ${s.m.toFixed(1)} h (${(s.m/s.dL).toFixed(2)} dny)<br>
+Dovolená celkem ${settings.vacDays} dní (${settings.vacHours} h) | Vybráno ${usedDays} dní | Zbývá ${remainDays} dní (${remainHours} h)`;}
+function render(){
+rate.value=settings.rate;nightBonus.value=settings.nightBonus;aftBonus.value=settings.aftBonus;
+aftStart.value=settings.aftStart;aftEnd.value=settings.aftEnd;union.value=settings.union;
+clothes.value=settings.clothes;dayLen.value=settings.dayLen;break30.checked=settings.break30;
+vacDays.value=settings.vacDays;vacHours.value=settings.vacHours;
+openaiKey.value=settings.openaiKey||"";romanKey.value=settings.romanKey||"";
+renderTable();renderSummary();renderChart();}
+async function exportMonthPDF(){
+const month=document.getElementById("monthExport").value;
+if(!month){alert("Zvol měsíc!");return;}
+const monthShifts=shifts.filter(s=>s.date.startsWith(month));
+if(monthShifts.length===0){alert("V tomto měsíci nejsou žádné záznamy.");return;}
+const {jsPDF}=window.jspdf;const doc=new jsPDF({orientation:"p",unit:"pt",format:"a4"});
+doc.setFillColor(79,140,255);doc.rect(0,0,595,60,"F");
+doc.setTextColor(255,255,255);doc.setFontSize(20);
+doc.text("Šichtovnice AI Pro – Roman F. Apps",40,40);
+doc.setTextColor(0,0,0);doc.setFontSize(14);
+doc.text(`Měsíc: ${month}`,40,90);
+doc.setFontSize(10);let y=110;
+doc.text("Datum   Příchod   Odchod   Typ   Hodin",40,y);
+monthShifts.forEach(s=>{y+=14;doc.text(`${s.date}   ${s.start||"-"}   ${s.end||"-"}   ${s.type}   ${s.hours.toFixed(2)}`,40,y);});
+y+=30;doc.setFontSize(12);doc.text("Souhrn:",40,y);
+doc.setFontSize(10);const summaryText=summaryEl.innerText.split("\n").join(" ");
+doc.text(summaryText,40,y+15,{maxWidth:500});y+=100;
+await html2canvas(chartEl).then(canvas=>{const img=canvas.toDataURL("image/png");
+doc.addImage(img,"PNG",60,y,480,200);});
+doc.save(`Sichtovnice_${month}.pdf`);}
+saveBtn.onclick=addShift;printBtn.onclick=()=>window.print();aiBtn.onclick=()=>alert("AI režim demo");
+clearBtn.onclick=()=>{if(confirm("Opravdu smazat všechna data?")){shifts=[];saveShifts();render();}};
+saveSettings.onclick=saveSettingsToStorage;exportMonth.onclick=exportMonthPDF;
+if(window.matchMedia("(prefers-color-scheme:dark)").matches)document.body.classList.add("dark-mode");
+render();
+</script>
+</body>
+</html>
